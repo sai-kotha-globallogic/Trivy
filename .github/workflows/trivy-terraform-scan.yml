@@ -1,86 +1,36 @@
-name: Trivy IaC Scan
-
-on: [push]
-
-permissions:
-  contents: read
-  security-events: write
-
+name: Trivy Infrastructure Scan
+on:
+  push:
+    branches:
+      - main
+  pull_request:
 jobs:
-  trivy_iac_scan:
-    runs-on: ubuntu-latest
+  build:
+    permissions:
+      contents: read # for actions/checkout to fetch code
+      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
+      actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
+      
+    name: Build
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Trivy CLI and jq
-        run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+      - name: Manual Trivy Setup
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          cache: true
+          version: v0.65.0
 
-      - name: Debug - List all potential IaC files
-        run: |
-          echo "Detected IaC files:"
-          find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" \)
+      - name: Run Trivy vulnerability scanner in IaC mode
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: 'config'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
 
-      - name: Trivy Debug (show all findings, plain output)
-        run: |
-          echo "===== Trivy All Results (Plain Output) ====="
-          find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" \) > trivy-reports/iac_files.txt
-          while read file; do
-            echo "---- $file ----"
-            trivy config "$file" || true
-          done < trivy-reports/iac_files.txt
-
-      - name: Trivy IaC SARIF scan (file-by-file)
-        run: |
-          mkdir -p trivy-reports
-          find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" \) > trivy-reports/iac_files.txt
-          rm -f trivy-reports/trivy-results.sarif
-          first_report=true
-          while read file; do
-            echo "Scanning $file"
-            trivy config --format sarif --output trivy-reports/scan.sarif "$file" || true
-            if grep -q '"runs"' trivy-reports/scan.sarif && jq -e 'try (.runs | type == "array" and length > 0 and .[0].results | type == "array" and .[0].results | length > 0) // false' trivy-reports/scan.sarif > /dev/null 2>&1; then
-              if $first_report; then
-                cp trivy-reports/scan.sarif trivy-reports/trivy-results.sarif
-                first_report=false
-              else
-                jq -s '
-                  .[0] as $first | .[1] as $second |
-                  ($first.runs[0].results //= []) |
-                  ($second.runs[0].results //= []) |
-                  $first.runs[0].results += $second.runs[0].results |
-                  $first
-                ' trivy-reports/trivy-results.sarif trivy-reports/scan.sarif > trivy-reports/merged.sarif && mv trivy-reports/merged.sarif trivy-reports/trivy-results.sarif
-              fi
-            else
-              echo "Skipping $file: SARIF has no valid runs/results array."
-            fi
-          done < trivy-reports/iac_files.txt
-          if [ ! -f trivy-reports/trivy-results.sarif ]; then
-            echo '{"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Trivy", "version": "N/A"}}, "results":[]}]}'> trivy-reports/trivy-results.sarif
-          fi
-
-      - name: Check if SARIF has results
-        id: sarif-check
-        run: |
-          if jq -e '.runs[0].results | length == 0' trivy-reports/trivy-results.sarif; then
-            echo "No findings in SARIF"
-            echo "found=false" >> $GITHUB_OUTPUT
-          else
-            echo "Findings present in SARIF"
-            echo "found=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload SARIF results to GitHub Security tab
-        if: steps.sarif-check.outputs.found == 'true'
+      - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: trivy-reports/trivy-results.sarif
-
-      - name: Upload SARIF artifact (for manual inspection)
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results-sarif
-          path: trivy-reports/trivy-results.sarif
+          sarif_file: 'trivy-results.sarif'
