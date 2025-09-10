@@ -17,28 +17,22 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y jq
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-          
 
-      - name: Debug- List all potential IaC files
+      - name: Debug: List all potential IaC files
         run: |
           echo "Detected IaC files:"
           find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" -o -name "Chart.yaml" -o -name "values.yaml" \)
 
-      - name: Robustly scan all directories with any IaC files (including Helm and .ymkl)
+      - name: Trivy IaC SARIF scan (file-by-file)
         run: |
           mkdir -p trivy-reports
+          find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" -o -name "Chart.yaml" -o -name "values.yaml" \) > trivy-reports/iac_files.txt
           rm -f trivy-reports/trivy-results.sarif
           first_report=true
-
-          # Unique directories with supported IaC files
-          find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" -o -name "Chart.yaml" -o -name "values.yaml" \) -exec dirname {} \; | sort -u | while read dir; do
-            echo "Scanning $dir"
-            trivy config --format sarif --output trivy-reports/scan.sarif "$dir" || true
-
-            # Also print plain Trivy output for debug
-            trivy config "$dir" || true
-
-            if grep -q '"runs"' trivy-reports/scan.sarif && jq -e 'try (.runs | type == "array" and length > 0 and .[0].results | type == "array") // false' trivy-reports/scan.sarif > /dev/null 2>&1; then
+          while read file; do
+            echo "Scanning $file"
+            trivy config --format sarif --output trivy-reports/scan.sarif "$file" || true
+            if grep -q '"runs"' trivy-reports/scan.sarif && jq -e 'try (.runs | type == "array" and length > 0 and .[0].results | type == "array" and .[0].results | length > 0) // false' trivy-reports/scan.sarif > /dev/null 2>&1; then
               if $first_report; then
                 cp trivy-reports/scan.sarif trivy-reports/trivy-results.sarif
                 first_report=false
@@ -52,11 +46,9 @@ jobs:
                 ' trivy-reports/trivy-results.sarif trivy-reports/scan.sarif > trivy-reports/merged.sarif && mv trivy-reports/merged.sarif trivy-reports/trivy-results.sarif
               fi
             else
-              echo "Skipping $dir: SARIF has no valid runs/results array."
+              echo "Skipping $file: SARIF has no valid runs/results array."
             fi
-          done
-
-          # If no SARIF was created (no findings at all), create a minimal valid SARIF with 'tool'
+          done < trivy-reports/iac_files.txt
           if [ ! -f trivy-reports/trivy-results.sarif ]; then
             echo '{"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Trivy", "version": "N/A"}}, "results":[]}]}'> trivy-reports/trivy-results.sarif
           fi
@@ -77,3 +69,9 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-reports/trivy-results.sarif
+
+      - name: Upload SARIF artifact (for manual inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results-sarif
+          path: trivy-reports/trivy-results.sarif
