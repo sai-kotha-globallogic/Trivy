@@ -6,6 +6,7 @@ on:
       - main
   pull_request:
 
+
 jobs:
   build:
     name: Trivy IaC Build and Scan
