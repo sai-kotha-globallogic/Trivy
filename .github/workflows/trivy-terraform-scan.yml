@@ -18,7 +18,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y jq
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
-      - name: Debug: List all potential IaC files
+      - name: Debug- List all potential IaC files
         run: |
           echo "Detected IaC files:"
           find . -type f \( -name "*.tf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.template" -o -name "*.ymkl" -o -name "Chart.yaml" -o -name "values.yaml" \)
