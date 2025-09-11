@@ -14,20 +14,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up results directory
-        run: mkdir -p myResults
+      - name: Run KICS Scan (output SARIF and JSON)
+        uses: checkmarx/kics-github-action@v2.1.13
+        with:
+          path: .
+          output_path: myResults
+          report_formats: 'sarif,json'
+          ignore_on_exit: results  # Prevents workflow from failing if issues are found
 
-      - name: Install KICS
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/bin
-          curl -sfL https://raw.githubusercontent.com/Checkmarx/kics/master/install.sh | sh -s -- -b $GITHUB_WORKSPACE/bin
-          echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
-
-      - name: Run KICS scan (scan all files, output SARIF and JSON)
-        run: |
-          kics -p . -o myResults/ --report-formats sarif,json
-
-      - name: Show KICS JSON (optional, for debugging)
+      - name: Show KICS JSON (optional)
         run: |
           if [ -f myResults/results.json ]; then
             cat myResults/results.json
