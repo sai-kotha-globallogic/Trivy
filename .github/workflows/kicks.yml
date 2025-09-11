@@ -1,17 +1,35 @@
-name: KICS IaC Scan
+name: KICS Security Scan
 
-on: [push, pull_request]
+on: [push]
+  #push:
+  #  branches: [main]
+  #pull_request:
+  #  branches: [main]
 
 jobs:
   kics_scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Run KICS Scan (ignore failures)
-        uses: checkmarx/kics-github-action@v2.1.13
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up results directory
+        run: mkdir -p myResults
+
+      - name: Run KICS scan (scan all files, output SARIF and JSON)
+        run: |
+          kics -p . -o myResults/ --report-formats sarif,json
+
+      - name: Show KICS JSON (optional, for debugging)
+        run: |
+          if [ -f myResults/results.json ]; then
+            cat myResults/results.json
+          else
+            echo "No KICS JSON results found."
+          fi
+
+      - name: Upload SARIF to GitHub Security tab
+        if: ${{ success() && (hashFiles('myResults/results.sarif') != '') }}
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          path: '.'
-          ignore_on_exit: results
-          output_path: myResults/
-      - name: Display KICS results
-        run: cat myResults/results.json
+          sarif_file: myResults/results.sarif
