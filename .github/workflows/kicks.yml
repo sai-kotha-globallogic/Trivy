@@ -10,7 +10,7 @@ jobs:
       - name: Run KICS Scan (ignore failures)
         uses: checkmarx/kics-github-action@v2.1.13
         with:
-          path: 'terraform'
+          path: '.'
           ignore_on_exit: results
           output_path: myResults/
       - name: Display KICS results
