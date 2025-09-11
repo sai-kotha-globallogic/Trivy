@@ -1,10 +1,10 @@
 name: KICS Security Scan
 
 on: [push]
-  #push:
-  #  branches: [main]
+#  push:
+ #   branches: [main]
   #pull_request:
-  #  branches: [main]
+   # branches: [main]
 
 jobs:
   kics_scan:
@@ -15,6 +15,11 @@ jobs:
 
       - name: Set up results directory
         run: mkdir -p myResults
+
+      - name: Install KICS
+        run: |
+          curl -sfL https://github.com/Checkmarx/kics/releases/latest/download/kics_linux_amd64.tar.gz | tar -xz
+          sudo mv kics /usr/local/bin/
 
       - name: Run KICS scan (scan all files, output SARIF and JSON)
         run: |
