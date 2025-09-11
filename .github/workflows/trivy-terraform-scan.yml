@@ -7,7 +7,7 @@ name: Trivy Infrastructure Scan
   pull_request:
 
 
-jobs:
+#jobs:
   build:
     name: Trivy IaC Build and Scan
     runs-on: ubuntu-24.04
