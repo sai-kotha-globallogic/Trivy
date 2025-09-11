@@ -1,15 +1,14 @@
 name: KICS Security Scan
 
 on: [push]
-#  push:
- #   branches: [main]
-  #pull_request:
-   # branches: [main]
-
 
 jobs:
   kics_scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,8 +18,8 @@ jobs:
         with:
           path: .
           output_path: myResults
-          report_formats: 'sarif,json'
-          ignore_on_exit: results  # Prevents workflow from failing if issues are found
+          output_formats: 'sarif,json'
+          ignore_on_exit: results
 
       - name: Show KICS JSON (optional)
         run: |
