@@ -1,6 +1,6 @@
 name: Trivy Infrastructure Scan
 
-on:
+#on:
   push:
     branches:
       - main
