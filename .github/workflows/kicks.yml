@@ -6,6 +6,7 @@ on: [push]
   #pull_request:
    # branches: [main]
 
+
 jobs:
   kics_scan:
     runs-on: ubuntu-latest
@@ -18,8 +19,7 @@ jobs:
 
       - name: Install KICS
         run: |
-          curl -sfL https://github.com/Checkmarx/kics/releases/latest/download/kics_linux_amd64.tar.gz | tar -xz
-          sudo mv kics /usr/local/bin/
+          curl -sfL https://raw.githubusercontent.com/Checkmarx/kics/master/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Run KICS scan (scan all files, output SARIF and JSON)
         run: |
