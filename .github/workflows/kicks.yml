@@ -1,6 +1,8 @@
-name: KICS Security Scan
+name: KICS Security Scan (Severity Mapped)
 
 on: [push]
+  #push:
+  #pull_request:
 
 jobs:
   kics_scan:
@@ -10,27 +12,181 @@ jobs:
       security-events: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run KICS Scan (output SARIF and JSON)
+      - name: Run KICS (JSON output)
         uses: checkmarx/kics-github-action@v2.1.13
         with:
-          path: .
-          output_path: myResults
-          output_formats: 'sarif,json'
-          ignore_on_exit: results
+            path: .
+            output_path: myResults
+            output_formats: 'json'
+            ignore_on_exit: results
 
-      - name: Show KICS JSON (optional)
+      - name: Show snippet of raw KICS JSON
         run: |
           if [ -f myResults/results.json ]; then
-            cat myResults/results.json
+            echo "--- First 200 lines of results.json ---"
+            head -n 200 myResults/results.json
           else
-            echo "No KICS JSON results found."
+            echo "No results.json found!"
+            exit 1
           fi
 
-      - name: Upload SARIF to GitHub Security tab
-        if: ${{ success() && (hashFiles('myResults/results.sarif') != '') }}
+      - name: Install BeautifulSoup (optional for enrichment)
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install beautifulsoup4
+
+      - name: Add severity mapping script
+        run: |
+          mkdir -p scripts
+          cat > scripts/kics_json_to_sarif.py <<'EOF'
+          # (Script inserted below automatically — kept in sync)
+          EOF
+          # Overwrite with actual script from repository if you commit it instead.
+
+      - name: Write severity mapping script contents
+        run: |
+          cat > scripts/kics_json_to_sarif.py <<'PYEOF'
+          #!/usr/bin/env python3
+          # (You can paste the full script here or keep it version-controlled)
+          import json, os, sys, hashlib, re, urllib.request
+          from html import unescape
+          try:
+              from bs4 import BeautifulSoup
+              BS4_AVAILABLE = True
+          except ImportError:
+              BS4_AVAILABLE = False
+          SEVERITY_MAPPING = {
+              "CRITICAL": ("error","10.0"),
+              "HIGH": ("error","8.9"),
+              "MEDIUM": ("warning","6.9"),
+              "LOW": ("note","3.9"),
+              "INFO": ("note","0.0"),
+              "UNKNOWN": ("note","0.0"),
+          }
+          def normalize_path(p): return p.lstrip("./").replace("\\","/")
+          def fetch_description(url):
+              if not url or not url.startswith("http"): return ""
+              try:
+                  with urllib.request.urlopen(url, timeout=8) as resp:
+                      html = resp.read().decode("utf-8","replace")
+              except Exception: return ""
+              if not BS4_AVAILABLE: return ""
+              try:
+                  soup = BeautifulSoup(html,"html.parser")
+                  h3 = soup.find("h3", id="description")
+                  if not h3:
+                      for c in soup.find_all("h3"):
+                          if "description" in c.get_text(strip=True).lower():
+                              h3 = c; break
+                  if h3:
+                      parts=[]
+                      for sib in h3.next_siblings:
+                          if getattr(sib,"name",None) and re.match(r"h[1-6]", sib.name, re.I): break
+                          txt=""
+                          if hasattr(sib,"get_text"): txt = sib.get_text(" ", strip=True)
+                          elif isinstance(sib,str): txt = sib.strip()
+                          if txt: parts.append(txt)
+                      val=" ".join(parts)
+                      val=re.sub(r"\s+"," ",val).strip()
+                      return val[:800]
+              except Exception: return ""
+              return ""
+          def main(src_json, out_sarif, enrich):
+              with open(src_json,"r",encoding="utf-8") as f: data=json.load(f)
+              queries=data.get("queries",[])
+              rules=[]; rule_idx={}; results=[]
+              for q in queries:
+                  qid=q.get("query_id") or hashlib.sha256(q.get("query_name","").encode()).hexdigest()[:16]
+                  sev=(q.get("severity") or "UNKNOWN").upper()
+                  level,secsev=SEVERITY_MAPPING.get(sev, SEVERITY_MAPPING["UNKNOWN"])
+                  base_desc=q.get("description","").strip()
+                  qurl=q.get("query_url") or q.get("queryURL")
+                  extra=""
+                  if enrich and qurl:
+                      fetched=fetch_description(qurl)
+                      if fetched and fetched.lower() not in base_desc.lower():
+                          extra=f"\n\nEnriched Description Extracted:\n{fetched}"
+                  full_desc=(base_desc+extra).strip() or q.get("query_name","")
+                  if qid not in rule_idx:
+                      rule_idx[qid]=len(rules)
+                      rule={
+                        "id": qid,
+                        "name": q.get("query_name"),
+                        "shortDescription":{"text": q.get("query_name","")},
+                        "fullDescription":{"text": full_desc},
+                        "help":{"text": full_desc,"markdown": f"**Description:** {full_desc}"},
+                        "defaultConfiguration":{"level": level},
+                        "properties":{
+                            "problem.severity": sev,
+                            "security-severity": secsev,
+                            "tags": list(filter(None,["kics", q.get("platform",""), q.get("category",""), sev]))
+                        }
+                      }
+                      if qurl: rule["helpUri"]=qurl
+                      rules.append(rule)
+                  for occ in q.get("files",[]):
+                      fname=normalize_path(occ.get("file_name","UNKNOWN"))
+                      line=occ.get("line") or 1
+                      if not isinstance(line,int) or line < 1: line=1
+                      msg=f"{q.get('query_name')} - {base_desc or 'No description'}"
+                      results.append({
+                        "ruleId": qid,
+                        "ruleIndex": rule_idx[qid],
+                        "level": level,
+                        "message":{"text": msg},
+                        "locations":[{
+                          "physicalLocation":{
+                            "artifactLocation":{"uri": fname},
+                            "region":{"startLine": line}
+                          }
+                        }],
+                        "properties":{
+                          "kics_severity": sev,
+                          "security-severity": secsev,
+                          "category": q.get("category",""),
+                          "platform": q.get("platform",""),
+                          "cwe": q.get("cwe",""),
+                          "query_url": qurl
+                        }
+                      })
+              sarif={
+                "version":"2.1.0",
+                "$schema":"https://json.schemastore.org/sarif-2.1.0.json",
+                "runs":[{
+                  "tool":{"driver":{"name":"KICS (custom severity mapped)","informationUri":"https://github.com/Checkmarx/kics","rules":rules}},
+                  "results":results
+                }]
+              }
+              os.makedirs(os.path.dirname(out_sarif), exist_ok=True)
+              with open(out_sarif,"w",encoding="utf-8") as f: json.dump(sarif,f,indent=2)
+              print(f"Custom SARIF written: {out_sarif} (rules={len(rules)} results={len(results)})")
+          if __name__=="__main__":
+              if len(sys.argv)<3:
+                  print("Usage: script <results.json> <out.sarif> [--enrich]"); sys.exit(1)
+              enrich="--enrich" in sys.argv
+              args=[a for a in sys.argv[1:] if a!="--enrich"]
+              main(args[0], args[1], enrich)
+          PYEOF
+          chmod +x scripts/kics_json_to_sarif.py
+
+      - name: Generate severity-mapped SARIF
+        run: |
+          python3 scripts/kics_json_to_sarif.py myResults/results.json myResults/results-with-severity.sarif
+          echo "First 80 lines:"
+          head -n 80 myResults/results-with-severity.sarif || true
+
+      - name: Upload severity-mapped SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: myResults/results.sarif
+          sarif_file: myResults/results-with-severity.sarif
+
+      - name: Upload artifacts (raw + custom)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kics-severity-artifacts
+          path: |
+            myResults/results.json
+            myResults/results-with-severity.sarif
