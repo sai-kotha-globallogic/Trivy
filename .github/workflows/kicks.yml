@@ -4,12 +4,14 @@ on:
   push:
   pull_request:
 
+# Put permissions at top for clarity (applies to all jobs unless overridden)
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   kics_scan:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
 
     steps:
       - name: Checkout
@@ -26,30 +28,48 @@ jobs:
       - name: Show raw KICS JSON (first lines)
         run: |
           ls -l myResults || true
+            # If empty, fail early
           if [ ! -f myResults/results.json ]; then
             echo "results.json missing"; exit 1
           fi
-          head -n 80 myResults/results.json
+          head -n 80 myResults/results.json || true
 
       - name: Convert to severity-mapped SARIF
         run: |
           mkdir -p custom-sarif
           python3 scripts/kics_json_to_sarif.py myResults/results.json custom-sarif/results-with-severity.sarif
+          echo "---- custom-sarif listing ----"
           ls -l custom-sarif
+          echo "---- SARIF head ----"
           head -n 40 custom-sarif/results-with-severity.sarif || true
 
       - name: Verify SARIF exists
         run: test -f custom-sarif/results-with-severity.sarif
 
-      - name: Upload SARIF to Code Scanning
+      - name: Debug event context
+        run: |
+          echo "Event: $GITHUB_EVENT_NAME"
+          if [ -f "$GITHUB_EVENT_PATH" ]; then
+            echo "Fork flag (if PR):"
+            jq -r '.pull_request.head.repo.fork // "N/A"' "$GITHUB_EVENT_PATH" || true
+            echo "Head repo full name:"
+            jq -r '.pull_request.head.repo.full_name // "N/A"' "$GITHUB_EVENT_PATH" || true
+          fi
+
+      - name: Upload SARIF to Code Scanning (skip if fork PR)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: custom-sarif/results-with-severity.sarif
 
-      - name: Upload artifacts (debug)
+      - name: Note skipped upload (fork PR)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+        run: echo "Skipping SARIF upload for forked PR due to permission restrictions."
+
+      - name: Upload artifacts (always)
         uses: actions/upload-artifact@v4
         with:
-          name: kics-severity-artifacts
-          path: |
-            myResults/results.json
-            custom-sarif/results-with-severity.sarif
+            name: kics-severity-artifacts
+            path: |
+              myResults/results.json
+              custom-sarif/results-with-severity.sarif
