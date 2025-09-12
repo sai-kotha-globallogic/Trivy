@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run KICS (JSON output)
+      - name: Run KICS (JSON output only)
         uses: checkmarx/kics-github-action@v2.1.13
         with:
           path: .
@@ -23,42 +23,30 @@ jobs:
           output_formats: 'json'
           ignore_on_exit: results
 
-      - name: Inspect myResults permissions
+      - name: Show raw KICS JSON (first lines)
         run: |
-          ls -ld myResults || true
           ls -l myResults || true
-
-      - name: (Optional) Fix permissions if needed
-        run: |
-          if [ -d myResults ]; then
-            sudo chown -R $USER:$USER myResults || true
-            chmod -R u+w myResults || true
+          if [ ! -f myResults/results.json ]; then
+            echo "results.json missing"; exit 1
           fi
+          head -n 80 myResults/results.json
 
-      - name: Show snippet of raw KICS JSON
+      - name: Convert to severity-mapped SARIF
         run: |
-          if [ -f myResults/results.json ]; then
-            head -n 120 myResults/results.json
-          else
-            echo "results.json not found"; exit 1
-          fi
+          mkdir -p custom-sarif
+          python3 scripts/kics_json_to_sarif.py myResults/results.json custom-sarif/results-with-severity.sarif
+          ls -l custom-sarif
+          head -n 40 custom-sarif/results-with-severity.sarif || true
 
-      - name: Write severity mapping script
-        run: |
-          mkdir -p scripts
-          cat > scripts/kics_json_to_sarif.py <<'PYEOF'
+      - name: Verify SARIF exists
+        run: test -f custom-sarif/results-with-severity.sarif
 
-      - name: Generate severity-mapped SARIF
-        run: |
-           mkdir -p custom-sarif
-           python3 scripts/kics_json_to_sarif.py myResults/results.json custom-sarif/results-with-severity.sarif
-
-      - name: Upload severity-mapped SARIF
+      - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: custom-sarif/results-with-severity.sarif
 
-      - name: Upload artifacts
+      - name: Upload artifacts (debug)
         uses: actions/upload-artifact@v4
         with:
           name: kics-severity-artifacts
