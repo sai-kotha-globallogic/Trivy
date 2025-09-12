@@ -4,13 +4,14 @@ import os
 import sys
 import hashlib
 
+# Map KICS severities to (SARIF level, security-severity score)
 SEVERITY_MAPPING = {
-    "CRITICAL": ("error","10.0"),
-    "HIGH": ("error","8.9"),
-    "MEDIUM": ("warning","6.9"),
-    "LOW": ("note","3.9"),
-    "INFO": ("note","0.0"),
-    "UNKNOWN": ("note","0.0"),
+    "CRITICAL": ("error",  "10.0"),
+    "HIGH":     ("error",  "8.9"),
+    "MEDIUM":   ("warning","6.9"),
+    "LOW":      ("note",   "3.9"),
+    "INFO":     ("note",   "0.0"),
+    "UNKNOWN":  ("note",   "0.0"),
 }
 
 def norm(p: str) -> str:
@@ -20,6 +21,7 @@ def main(src_json: str, out_sarif: str):
     if not os.path.isfile(src_json):
         print(f"ERROR: {src_json} not found", file=sys.stderr)
         sys.exit(2)
+
     with open(src_json, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -29,12 +31,16 @@ def main(src_json: str, out_sarif: str):
     results = []
 
     for q in queries:
-        qid = q.get("query_id") or hashlib.sha256((q.get("query_name") or "").encode()).hexdigest()[:16]
+        qid = q.get("query_id")
+        if not qid:
+            qid = hashlib.sha256((q.get("query_name") or "").encode()).hexdigest()[:16]
+
         raw_sev = (q.get("severity") or "UNKNOWN").upper()
         level, secsev = SEVERITY_MAPPING.get(raw_sev, SEVERITY_MAPPING["UNKNOWN"])
         desc = q.get("description") or ""
         q_name = q.get("query_name") or qid
 
+        # Add rule if new
         if qid not in rule_index:
             rule_index[qid] = len(rules)
             rules.append({
@@ -47,10 +53,16 @@ def main(src_json: str, out_sarif: str):
                 "properties": {
                     "problem.severity": raw_sev,
                     "security-severity": secsev,
-                    "tags": list(filter(None, ["kics", q.get("platform",""), q.get("category",""), raw_sev]))
+                    "tags": list(filter(None, [
+                        "kics",
+                        q.get("platform",""),
+                        q.get("category",""),
+                        raw_sev
+                    ]))
                 }
             })
 
+        # Results
         for fitem in q.get("files", []):
             file_name = norm(fitem.get("file_name", "UNKNOWN"))
             line = fitem.get("line") or 1
@@ -95,6 +107,7 @@ def main(src_json: str, out_sarif: str):
     os.makedirs(os.path.dirname(out_sarif), exist_ok=True)
     with open(out_sarif, "w", encoding="utf-8") as f:
         json.dump(sarif, f, indent=2)
+
     print(f"Custom SARIF written: {out_sarif} (rules={len(rules)} results={len(results)})")
 
 if __name__ == "__main__":
